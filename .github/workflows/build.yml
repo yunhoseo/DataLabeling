@@ -1,0 +1,207 @@
+# ============================================================
+# YOLO Auto-Label Pipeline - Cross-Platform Build & Release
+# ============================================================
+#
+# 사용법:
+#   git tag v1.0.0
+#   git push origin v1.0.0
+#
+# 결과:
+#   GitHub Releases 페이지에 macOS / Windows ZIP 파일 자동 업로드
+#   → 누구나 다운로드 가능
+#
+# 수동 실행:
+#   GitHub → Actions → Build & Release → Run workflow
+# ============================================================
+
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v1.0.0)'
+        required: false
+        default: 'manual'
+
+# 전체 워크플로우에 쓰기 권한 부여 (Release 생성용)
+permissions:
+  contents: write
+
+jobs:
+  # ========================================================
+  # Job 1: 빌드 (macOS + Windows 병렬)
+  # ========================================================
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: macOS
+            artifact_name: DataLabeling-macOS
+          - os: windows-latest
+            platform: Windows
+            artifact_name: DataLabeling-Windows
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      # --- PyTorch 플랫폼별 설치 ---
+      - name: Install PyTorch (macOS)
+        if: runner.os == 'macOS'
+        run: pip install torch torchvision
+
+      - name: Install PyTorch (Windows CPU)
+        if: runner.os == 'Windows'
+        run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+      # --- 공통 의존성 ---
+      - name: Install dependencies
+        run: pip install -r requirements-all.txt
+
+      - name: Install platform dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: pip install pyobjc
+
+      - name: Install platform dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: pip install pythonnet
+
+      # --- 환경 검증 ---
+      - name: Verify environment
+        run: |
+          python -c "
+          import sys
+          print(f'Python: {sys.version}')
+          print(f'Platform: {sys.platform}')
+          import torch; print(f'torch: {torch.__version__}')
+          import ultralytics; print(f'ultralytics: {ultralytics.__version__}')
+          import transformers; print(f'transformers: {transformers.__version__}')
+          import cv2; print(f'cv2: {cv2.__version__}')
+          import fastapi; print(f'fastapi: {fastapi.__version__}')
+          import webview; print(f'pywebview: OK')
+          "
+
+      # --- PyInstaller 빌드 ---
+      - name: Build with PyInstaller
+        run: python -m PyInstaller datalabeling.spec --noconfirm --log-level WARN
+
+      # --- macOS: quarantine 속성 제거 ---
+      - name: Remove macOS quarantine attributes
+        if: runner.os == 'macOS'
+        run: |
+          if [ -d "dist/DataLabeling.app" ]; then
+            xattr -cr dist/DataLabeling.app
+          fi
+
+      # --- ZIP 압축 (Release 업로드용) ---
+      - name: Create ZIP (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd dist
+          zip -r -y ../DataLabeling-macOS.zip DataLabeling.app
+          cd ..
+          echo "ZIP_PATH=DataLabeling-macOS.zip" >> $GITHUB_ENV
+          echo "ZIP_NAME=DataLabeling-macOS.zip" >> $GITHUB_ENV
+          ls -lh DataLabeling-macOS.zip
+
+      - name: Create ZIP (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist\DataLabeling\*" -DestinationPath "DataLabeling-Windows.zip" -Force
+          echo "ZIP_PATH=DataLabeling-Windows.zip" >> $env:GITHUB_ENV
+          echo "ZIP_NAME=DataLabeling-Windows.zip" >> $env:GITHUB_ENV
+          Get-Item "DataLabeling-Windows.zip" | Select-Object Length
+
+      # --- Artifact 업로드 (Release job에서 사용) ---
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ env.ZIP_PATH }}
+          retention-days: 7
+
+      # --- 빌드 정보 ---
+      - name: Build summary
+        run: |
+          echo "========================================"
+          echo "  Build complete: ${{ matrix.platform }}"
+          echo "========================================"
+
+  # ========================================================
+  # Job 2: Release 생성 (양쪽 빌드 완료 후)
+  # ========================================================
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      # --- 양쪽 빌드 결과 다운로드 ---
+      - name: Download macOS build
+        uses: actions/download-artifact@v4
+        with:
+          name: DataLabeling-macOS
+          path: ./release-assets/
+
+      - name: Download Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: DataLabeling-Windows
+          path: ./release-assets/
+
+      - name: List release assets
+        run: ls -lh ./release-assets/
+
+      # --- GitHub Release 생성 + ZIP 첨부 ---
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "YOLO Auto-Label Pipeline ${{ github.ref_name }}"
+          body: |
+            ## YOLO Auto-Label Pipeline ${{ github.ref_name }}
+
+            ### 다운로드
+            | 플랫폼 | 파일 | 설명 |
+            |--------|------|------|
+            | 🍎 macOS (Apple Silicon) | `DataLabeling-macOS.zip` | `.app` 번들 — 압축 해제 후 실행 |
+            | 🪟 Windows (x64) | `DataLabeling-Windows.zip` | 압축 해제 → `DataLabeling.exe` 실행 |
+
+            ### 설치 방법
+
+            **macOS:**
+            1. `DataLabeling-macOS.zip` 다운로드
+            2. 압축 해제 → `DataLabeling.app` 생성
+            3. 첫 실행 시 Gatekeeper 경고 → 우클릭 > "열기" 선택
+            4. 또는 터미널: `xattr -cr DataLabeling.app`
+
+            **Windows:**
+            1. `DataLabeling-Windows.zip` 다운로드
+            2. 압축 해제 → `DataLabeling` 폴더 생성
+            3. `DataLabeling.exe` 더블클릭으로 실행
+            4. Windows Defender 경고 시 → "추가 정보" > "실행" 클릭
+
+            ### 기능
+            - 🚀 YOLO 오토 라벨링 파이프라인
+            - 🔄 JSON (COCO/LabelMe) → YOLO 라벨 변환
+            - 📦 데이터셋 ZIP 다운로드
+          draft: false
+          prerelease: false
+          files: |
+            ./release-assets/DataLabeling-macOS.zip
+            ./release-assets/DataLabeling-Windows.zip

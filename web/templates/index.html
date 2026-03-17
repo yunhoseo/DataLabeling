@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YOLO Auto-Label Pipeline</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f7fa; color: #334155; line-height: 1.6; }
+  .container { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 20px; color: #0f172a; }
+  .card { background: #fff; border-radius: 12px; padding: 24px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .card-title { font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 16px; }
+
+  /* ===== Tab Bar ===== */
+  .tab-bar { display: flex; gap: 4px; margin-bottom: 20px; background: #fff; border-radius: 10px; padding: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .tab-btn { flex: 1; padding: 10px 16px; border: none; background: transparent; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; color: #64748b; transition: all 0.2s; }
+  .tab-btn.active { background: #3b82f6; color: #fff; }
+  .tab-btn:hover:not(.active) { background: #f1f5f9; color: #334155; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ===== Upload ===== */
+  .drop-zone { border: 2px dashed #cbd5e1; border-radius: 8px; padding: 40px; text-align: center; cursor: pointer; transition: all 0.2s; }
+  .drop-zone:hover, .drop-zone.drag-over { border-color: #3b82f6; background: #eff6ff; }
+  .drop-zone p { color: #94a3b8; font-size: 0.9rem; }
+  .drop-zone .icon { font-size: 2rem; margin-bottom: 8px; }
+  .upload-info { margin-top: 12px; padding: 10px 14px; background: #f0fdf4; border-radius: 6px; color: #16a34a; font-size: 0.85rem; display: none; }
+
+  /* ===== Form ===== */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .form-group { display: flex; flex-direction: column; gap: 4px; }
+  .form-group.full { grid-column: 1 / -1; }
+  label { font-size: 0.8rem; font-weight: 500; color: #64748b; }
+  input[type="number"], input[type="text"], input[type="password"], select {
+    padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 0.9rem; outline: none;
+  }
+  input:focus, select:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+
+  /* ===== Radio mode selector ===== */
+  .mode-selector { display: flex; gap: 12px; margin-bottom: 16px; }
+  .mode-option { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 10px 16px;
+    border: 2px solid #e2e8f0; border-radius: 8px; font-size: 0.85rem; font-weight: 500; transition: all 0.2s; }
+  .mode-option.active { border-color: #3b82f6; background: #eff6ff; color: #1d4ed8; }
+  .mode-option input[type="radio"] { accent-color: #3b82f6; }
+
+  /* ===== Model upload mini zone ===== */
+  .model-drop { border: 1px dashed #cbd5e1; border-radius: 6px; padding: 12px; text-align: center;
+    cursor: pointer; font-size: 0.8rem; color: #94a3b8; transition: all 0.2s; }
+  .model-drop:hover { border-color: #3b82f6; background: #eff6ff; }
+  .model-drop.uploaded { border-color: #16a34a; color: #16a34a; border-style: solid; }
+
+  /* ===== Split ===== */
+  .split-section { margin-top: 16px; }
+  .split-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .split-row label { width: 50px; font-size: 0.85rem; }
+  .split-row input[type="range"] { flex: 1; accent-color: #3b82f6; }
+  .split-row .val { width: 40px; text-align: right; font-weight: 600; font-size: 0.85rem; }
+  .split-sum { font-size: 0.8rem; text-align: right; color: #64748b; }
+  .split-sum.error { color: #ef4444; }
+
+  /* ===== Toggle ===== */
+  .toggle-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .toggle-switch { position: relative; width: 44px; height: 24px; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; cursor: pointer; inset: 0; background: #cbd5e1; border-radius: 24px; transition: 0.3s; }
+  .toggle-slider:before { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.3s; }
+  .toggle-switch input:checked + .toggle-slider { background: #8b5cf6; }
+  .toggle-switch input:checked + .toggle-slider:before { transform: translateX(20px); }
+  .aug-options { display: none; }
+  .aug-options.active { display: block; }
+  .aug-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .aug-row label { width: 100px; font-size: 0.85rem; }
+  .aug-row input[type="range"] { flex: 1; accent-color: #8b5cf6; }
+  .aug-row .val { width: 50px; text-align: right; font-weight: 600; font-size: 0.85rem; }
+  .aug-check { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .aug-check input[type="checkbox"] { accent-color: #8b5cf6; width: 16px; height: 16px; }
+  .aug-check label { font-size: 0.85rem; width: auto; }
+
+  /* ===== Info box ===== */
+  .info-box { font-size: 0.75rem; color: #64748b; background: #f8fafc; padding: 8px 12px; border-radius: 6px; margin-top: 8px; line-height: 1.5; }
+  .info-box.green { background: #f0fdf4; color: #16a34a; }
+
+  /* ===== API Key ===== */
+  .api-key-section { margin-bottom: 14px; }
+  .api-key-section .form-group { margin-bottom: 0; }
+  .api-key-status { font-size: 0.75rem; margin-top: 4px; }
+  .api-key-status.loaded { color: #16a34a; }
+  .api-key-status.empty { color: #94a3b8; }
+
+  /* ===== Button ===== */
+  .btn { display: block; width: 100%; padding: 12px; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+  .btn-primary { background: #3b82f6; color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #2563eb; }
+  .btn-primary:disabled { background: #94a3b8; cursor: not-allowed; }
+  .btn-download { background: #16a34a; color: #fff; margin-top: 12px; text-decoration: none; text-align: center; }
+  .btn-download:hover:not(:disabled) { background: #15803d; }
+  .btn-download:disabled { background: #94a3b8; cursor: not-allowed; }
+
+  /* ===== Progress ===== */
+  .progress-section { display: none; }
+  .step-list { list-style: none; }
+  .step-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
+  .step-item:last-child { border-bottom: none; }
+  .step-icon { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; flex-shrink: 0; }
+  .step-icon.pending { background: #f1f5f9; color: #94a3b8; }
+  .step-icon.running { background: #dbeafe; color: #3b82f6; animation: pulse 1.5s infinite; }
+  .step-icon.done { background: #dcfce7; color: #16a34a; }
+  .step-icon.error { background: #fef2f2; color: #ef4444; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .step-name { font-size: 0.9rem; font-weight: 500; }
+  .step-detail { font-size: 0.8rem; color: #64748b; margin-left: auto; }
+
+  /* ===== Result ===== */
+  .result-section { display: none; }
+  .result-summary { background: #f0fdf4; border-radius: 8px; padding: 16px; font-size: 0.9rem; line-height: 1.8; }
+
+  /* ===== JSON Converter ===== */
+  .convert-drop-zone { border: 2px dashed #cbd5e1; border-radius: 8px; padding: 40px; text-align: center; cursor: pointer; transition: all 0.2s; }
+  .convert-drop-zone:hover, .convert-drop-zone.drag-over { border-color: #8b5cf6; background: #faf5ff; }
+  .convert-drop-zone p { color: #94a3b8; font-size: 0.9rem; }
+  .convert-drop-zone .icon { font-size: 2rem; margin-bottom: 8px; }
+
+  .convert-file-list { margin-top: 10px; padding: 10px 14px; background: #f8fafc; border-radius: 6px; font-size: 0.82rem; color: #475569; display: none; }
+  .convert-file-list .file-item { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+  .convert-file-list .file-item::before { content: "📄"; font-size: 0.85rem; }
+
+  .convert-preview { background: #f8fafc; border-radius: 8px; padding: 16px; display: none; }
+  .format-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px; }
+  .format-badge.coco { background: #dbeafe; color: #1d4ed8; }
+  .format-badge.labelme { background: #dcfce7; color: #15803d; }
+  .format-badge.unknown { background: #fef2f2; color: #ef4444; }
+  .class-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .class-tag { background: #e0f2fe; color: #0369a1; padding: 2px 10px; border-radius: 12px; font-size: 0.8rem; }
+
+  .convert-result { background: #f0fdf4; border-radius: 8px; padding: 16px; font-size: 0.9rem; line-height: 1.8; display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>YOLO Auto-Label Pipeline</h1>
+
+  <!-- ===== Tab Bar ===== -->
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="pipeline">🚀 오토 라벨 파이프라인</button>
+    <button class="tab-btn" data-tab="converter">🔄 JSON → YOLO 변환</button>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- TAB 1: 오토 라벨 파이프라인 (기존)                        -->
+  <!-- ======================================================= -->
+  <div id="tab-pipeline" class="tab-panel active">
+
+    <!-- 1. Upload -->
+    <div class="card">
+      <div class="card-title">1. 영상 업로드</div>
+      <div class="drop-zone" id="dropZone">
+        <div class="icon">&#128249;</div>
+        <p>클릭하거나 영상을 드래그하세요</p>
+        <p style="font-size:0.75rem; margin-top:4px;">.mp4 .avi .mov .mkv</p>
+      </div>
+      <input type="file" id="fileInput" accept=".mp4,.avi,.mov,.mkv" hidden>
+      <div class="upload-info" id="uploadInfo"></div>
+    </div>
+
+    <!-- 2. Config -->
+    <div class="card">
+      <div class="card-title">2. 파이프라인 설정</div>
+
+      <!-- Labeling Mode -->
+      <label style="font-size:0.8rem; font-weight:500; color:#64748b; display:block; margin-bottom:8px;">라벨링 모드</label>
+      <div class="mode-selector">
+        <label class="mode-option active" id="modeYoloLabel">
+          <input type="radio" name="labelingMode" value="yolo" checked> Custom YOLO Model
+        </label>
+        <label class="mode-option" id="modeGdinoLabel">
+          <input type="radio" name="labelingMode" value="grounding_dino"> Grounding DINO (Zero-Shot)
+        </label>
+      </div>
+
+      <!-- YOLO Mode Options -->
+      <div id="yoloOptions">
+        <div class="form-group" style="margin-bottom:12px;">
+          <label>YOLO Model (.pt)</label>
+          <div class="model-drop" id="modelDropZone">
+            best.pt 사용 중 (클릭하여 다른 모델 업로드)
+          </div>
+          <input type="file" id="modelFileInput" accept=".pt" hidden>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Confidence Threshold</label>
+            <input type="number" id="confThreshold" value="0.5" min="0.01" max="1.0" step="0.05">
+          </div>
+        </div>
+      </div>
+
+      <!-- Grounding DINO Mode Options -->
+      <div id="gdinoOptions" style="display:none;">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Box Threshold</label>
+            <input type="number" id="boxThreshold" value="0.35" min="0.01" max="1.0" step="0.05">
+          </div>
+          <div class="form-group">
+            <label>Text Threshold</label>
+            <input type="number" id="textThreshold" value="0.25" min="0.01" max="1.0" step="0.05">
+          </div>
+          <div class="form-group">
+            <label>모델 크기</label>
+            <select id="gdinoModelSize">
+              <option value="tiny">Tiny (~172MB, 빠름)</option>
+              <option value="base" selected>Base (~894MB, 정확)</option>
+            </select>
+          </div>
+        </div>
+        <div class="info-box" style="margin-top:8px;">
+          &#x1f50d; Grounding DINO는 사전 학습 모델(.pt) 없이 텍스트 프롬프트로 객체를 탐지합니다.<br>
+          아래 <b>Class Names</b>에 입력한 이름이 탐지 프롬프트로 사용됩니다. 최초 실행 시 모델 다운로드에 시간이 소요됩니다.
+        </div>
+      </div>
+
+      <!-- Common Options -->
+      <div class="form-grid" style="margin-top:12px;">
+        <div class="form-group">
+          <label>Frame Interval</label>
+          <input type="number" id="frameInterval" value="30" min="1" max="300">
+        </div>
+        <div class="form-group">
+          <label>출력 너비 (px)</label>
+          <input type="number" id="targetWidth" value="640" min="32" max="1920" step="32">
+        </div>
+        <div class="form-group">
+          <label>출력 높이 (px)</label>
+          <input type="number" id="targetHeight" value="640" min="32" max="1920" step="32">
+        </div>
+        <div class="form-group full">
+          <label>Class Names (쉼표 구분)</label>
+          <input type="text" id="classNames" value="red_ball">
+        </div>
+      </div>
+
+      <div class="split-section">
+        <label style="font-size:0.8rem; font-weight:500; color:#64748b;">데이터 분할 비율</label>
+        <div class="split-row" style="margin-top:8px;">
+          <label>Train</label>
+          <input type="range" id="trainRatio" min="0" max="100" value="70">
+          <span class="val" id="trainVal">70%</span>
+        </div>
+        <div class="split-row">
+          <label>Valid</label>
+          <input type="range" id="validRatio" min="0" max="100" value="20">
+          <span class="val" id="validVal">20%</span>
+        </div>
+        <div class="split-row">
+          <label>Test</label>
+          <input type="range" id="testRatio" min="0" max="100" value="10" disabled>
+          <span class="val" id="testVal">10%</span>
+        </div>
+        <div class="split-sum" id="splitSum">합계: 100%</div>
+      </div>
+    </div>
+
+    <!-- 3. Augmentation -->
+    <div class="card">
+      <div class="toggle-header">
+        <div class="card-title" style="margin-bottom:0;">3. 데이터 증강 (Roboflow)</div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="augToggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="aug-options" id="augOptions">
+        <div class="api-key-section">
+          <div class="form-group">
+            <label>Roboflow API Key</label>
+            <input type="password" id="roboflowApiKey" placeholder="API Key 입력..." style="width:100%;">
+            <div class="api-key-status" id="apiKeyStatus"></div>
+          </div>
+        </div>
+        <div class="aug-check">
+          <input type="checkbox" id="augFlipH" checked>
+          <label for="augFlipH">Horizontal Flip</label>
+        </div>
+        <div class="aug-check">
+          <input type="checkbox" id="augFlipV">
+          <label for="augFlipV">Vertical Flip</label>
+        </div>
+        <div class="aug-row">
+          <label>Rotation</label>
+          <input type="range" id="augRotate" min="0" max="45" value="15">
+          <span class="val" id="augRotateVal">15&deg;</span>
+        </div>
+        <div class="aug-row">
+          <label>Blur</label>
+          <input type="range" id="augBlur" min="0" max="1.75" value="1.0" step="0.25">
+          <span class="val" id="augBlurVal">1.0</span>
+        </div>
+        <div class="aug-row">
+          <label>Brightness</label>
+          <input type="range" id="augBrightness" min="0" max="50" value="15">
+          <span class="val" id="augBrightnessVal">15%</span>
+        </div>
+        <div class="aug-row">
+          <label>증강 배수</label>
+          <input type="range" id="augVersions" min="1" max="10" value="3">
+          <span class="val" id="augVersionsVal">3x</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Run -->
+    <button class="btn btn-primary" id="runBtn" disabled>파이프라인 실행</button>
+
+    <!-- 4. Progress -->
+    <div class="card progress-section" id="progressSection">
+      <div class="card-title">4. 진행 상황</div>
+      <ul class="step-list" id="stepList"></ul>
+    </div>
+
+    <!-- 5. Result -->
+    <div class="card result-section" id="resultSection">
+      <div class="card-title">5. 결과</div>
+      <div class="result-summary" id="resultSummary"></div>
+      <button class="btn btn-download" id="downloadBtn" onclick="downloadFile('/api/download', 'dataset.zip')">데이터셋 다운로드 (ZIP)</button>
+    </div>
+
+  </div><!-- /tab-pipeline -->
+
+  <!-- ======================================================= -->
+  <!-- TAB 2: JSON → YOLO 변환                                 -->
+  <!-- ======================================================= -->
+  <div id="tab-converter" class="tab-panel">
+
+    <!-- JSON 파일 업로드 -->
+    <div class="card">
+      <div class="card-title">1. JSON 파일 업로드</div>
+      <div class="convert-drop-zone" id="convertDropZone">
+        <div class="icon">📂</div>
+        <p>클릭하거나 JSON 파일을 드래그하세요</p>
+        <p style="font-size:0.75rem; margin-top:4px;">COCO JSON (단일 파일) 또는 LabelMe JSON (복수 파일) 지원</p>
+      </div>
+      <input type="file" id="convertFileInput" accept=".json" multiple hidden>
+      <div class="convert-file-list" id="convertFileList"></div>
+
+      <!-- 포맷 미리보기 (JS 파싱) -->
+      <div class="convert-preview" id="convertPreview">
+        <span class="format-badge" id="formatBadge"></span>
+        <div style="font-size:0.82rem; color:#475569; margin-bottom:4px;">감지된 클래스</div>
+        <div class="class-list" id="classTagList"></div>
+        <div style="font-size:0.78rem; color:#94a3b8; margin-top:8px;" id="previewNote"></div>
+      </div>
+    </div>
+
+    <!-- 포맷 안내 -->
+    <div class="card" style="padding:18px 24px;">
+      <div class="card-title" style="margin-bottom:10px;">지원 포맷</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+        <div class="info-box" style="margin:0;">
+          <b>COCO JSON</b><br>
+          단일 .json 파일<br>
+          <code style="font-size:0.72rem;">images / annotations / categories</code> 키 포함
+        </div>
+        <div class="info-box" style="margin:0;">
+          <b>LabelMe JSON</b><br>
+          이미지별 .json 파일 (복수 선택)<br>
+          <code style="font-size:0.72rem;">shapes / imageWidth / imageHeight</code> 키 포함
+        </div>
+      </div>
+      <div class="info-box" style="margin-top:10px;">
+        변환 결과 ZIP에는 <b>labels/</b> 폴더(YOLO .txt 파일)와 <b>data.yaml</b>이 포함됩니다.
+      </div>
+    </div>
+
+    <!-- 변환 실행 버튼 -->
+    <button class="btn btn-primary" id="convertBtn" disabled>변환 실행</button>
+
+    <!-- 변환 결과 -->
+    <div class="card" id="convertResultCard" style="display:none;">
+      <div class="card-title">변환 완료</div>
+      <div class="convert-result" id="convertResult" style="display:block;"></div>
+      <button class="btn btn-download" id="convertDownloadBtn">YOLO 라벨 다운로드 (ZIP)</button>
+    </div>
+
+  </div><!-- /tab-converter -->
+
+</div><!-- /container -->
+
+<script>
+const $ = id => document.getElementById(id);
+let videoId = null;
+let modelId = null;
+
+// ===================================================
+// Tab 전환
+// ===================================================
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    $('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+// ===================================================
+// Pipeline Tab: 영상 업로드
+// ===================================================
+const dropZone = $('dropZone');
+const fileInput = $('fileInput');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files.length) uploadFile(fileInput.files[0]); });
+
+async function uploadFile(file) {
+  const info = $('uploadInfo');
+  info.style.display = 'block';
+  info.textContent = '업로드 중...';
+  info.style.background = '#eff6ff';
+  info.style.color = '#3b82f6';
+
+  const form = new FormData();
+  form.append('video', file);
+
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', body: form });
+    if (!res.ok) throw new Error((await res.json()).detail);
+    const data = await res.json();
+    videoId = data.video_id;
+    info.style.background = '#f0fdf4';
+    info.style.color = '#16a34a';
+    info.textContent = `${data.filename} (${data.size_mb}MB) 업로드 완료`;
+    $('runBtn').disabled = false;
+  } catch (e) {
+    info.style.background = '#fef2f2';
+    info.style.color = '#ef4444';
+    info.textContent = `업로드 실패: ${e.message}`;
+  }
+}
+
+// ===================================================
+// Pipeline Tab: 라벨링 모드 토글
+// ===================================================
+document.querySelectorAll('input[name="labelingMode"]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    const mode = document.querySelector('input[name="labelingMode"]:checked').value;
+    $('yoloOptions').style.display = mode === 'yolo' ? 'block' : 'none';
+    $('gdinoOptions').style.display = mode === 'grounding_dino' ? 'block' : 'none';
+    document.querySelectorAll('.mode-option').forEach(el => el.classList.remove('active'));
+    radio.parentElement.classList.add('active');
+  });
+});
+
+// ===================================================
+// Pipeline Tab: 모델 업로드
+// ===================================================
+const modelDropZone = $('modelDropZone');
+const modelFileInput = $('modelFileInput');
+
+modelDropZone.addEventListener('click', () => modelFileInput.click());
+modelFileInput.addEventListener('change', async () => {
+  if (!modelFileInput.files.length) return;
+  const file = modelFileInput.files[0];
+  modelDropZone.textContent = '모델 업로드 중...';
+  modelDropZone.className = 'model-drop';
+
+  const form = new FormData();
+  form.append('model', file);
+
+  try {
+    const res = await fetch('/api/upload-model', { method: 'POST', body: form });
+    if (!res.ok) throw new Error((await res.json()).detail);
+    const data = await res.json();
+    modelId = data.model_id;
+    modelDropZone.textContent = `${data.filename} (${data.size_mb}MB) 업로드 완료`;
+    modelDropZone.className = 'model-drop uploaded';
+  } catch (e) {
+    modelDropZone.textContent = `업로드 실패: ${e.message}`;
+    modelDropZone.style.color = '#ef4444';
+  }
+});
+
+// ===================================================
+// Pipeline Tab: API Key 상태 확인
+// ===================================================
+(async function checkApiKeyStatus() {
+  try {
+    const res = await fetch('/api/config-key-status');
+    const data = await res.json();
+    const statusEl = $('apiKeyStatus');
+    if (data.has_key) {
+      statusEl.textContent = '✓ config.yaml에서 API Key 로드됨 (비워두면 config.yaml 값 사용)';
+      statusEl.className = 'api-key-status loaded';
+    } else {
+      statusEl.textContent = 'config.yaml에 API Key 미설정 — 여기에 입력하세요';
+      statusEl.className = 'api-key-status empty';
+    }
+  } catch (e) { /* ignore */ }
+})();
+
+// ===================================================
+// Pipeline Tab: Split 슬라이더
+// ===================================================
+function updateSplit() {
+  const train = parseInt($('trainRatio').value);
+  const valid = parseInt($('validRatio').value);
+  const test = Math.max(0, 100 - train - valid);
+  $('trainVal').textContent = train + '%';
+  $('validVal').textContent = valid + '%';
+  $('testVal').textContent = test + '%';
+  $('testRatio').value = test;
+  const sum = train + valid + test;
+  const sumEl = $('splitSum');
+  sumEl.textContent = `합계: ${sum}%`;
+  sumEl.className = sum === 100 ? 'split-sum' : 'split-sum error';
+}
+$('trainRatio').addEventListener('input', updateSplit);
+$('validRatio').addEventListener('input', updateSplit);
+
+// ===================================================
+// Pipeline Tab: 증강 토글 + 슬라이더
+// ===================================================
+$('augToggle').addEventListener('change', () => {
+  $('augOptions').classList.toggle('active', $('augToggle').checked);
+});
+$('augRotate').addEventListener('input', () => { $('augRotateVal').innerHTML = $('augRotate').value + '&deg;'; });
+$('augBlur').addEventListener('input', () => { $('augBlurVal').textContent = $('augBlur').value; });
+$('augBrightness').addEventListener('input', () => { $('augBrightnessVal').textContent = $('augBrightness').value + '%'; });
+$('augVersions').addEventListener('input', () => { $('augVersionsVal').textContent = $('augVersions').value + 'x'; });
+
+// ===================================================
+// Pipeline Tab: 스텝 목록 생성
+// ===================================================
+function buildStepList(enableAug, labelingMode) {
+  const labelStepName = labelingMode === 'grounding_dino'
+    ? 'Grounding DINO 라벨링' : 'YOLO 오토라벨링';
+
+  const steps = [
+    { step: 1, name: '프레임 추출' },
+    { step: 2, name: labelStepName },
+    { step: 3, name: '데이터 분할' },
+    { step: 4, name: '데이터셋 구성' },
+  ];
+  if (enableAug) {
+    steps.push({ step: 5, name: 'Roboflow 증강' });
+    steps.push({ step: 6, name: '증강 데이터셋 정리' });
+    steps.push({ step: 7, name: 'ZIP 생성' });
+  } else {
+    steps.push({ step: 5, name: 'ZIP 생성' });
+  }
+
+  const list = $('stepList');
+  list.innerHTML = steps.map(s =>
+    `<li class="step-item" data-step="${s.step}">
+      <div class="step-icon pending">${s.step}</div>
+      <span class="step-name">${s.name}</span>
+      <span class="step-detail"></span>
+    </li>`
+  ).join('');
+}
+
+// ===================================================
+// Pipeline Tab: 실행
+// ===================================================
+$('runBtn').addEventListener('click', async () => {
+  if (!videoId) return;
+
+  const train = parseInt($('trainRatio').value);
+  const valid = parseInt($('validRatio').value);
+  const test = 100 - train - valid;
+  if (test < 0) { alert('Train + Valid 합이 100을 초과합니다.'); return; }
+
+  const enableAug = $('augToggle').checked;
+  const labelingMode = document.querySelector('input[name="labelingMode"]:checked').value;
+
+  const config = {
+    video_id: videoId,
+    frame_interval: parseInt($('frameInterval').value),
+    target_width: parseInt($('targetWidth').value) || null,
+    target_height: parseInt($('targetHeight').value) || null,
+    conf_threshold: parseFloat($('confThreshold').value),
+    train_ratio: train,
+    valid_ratio: valid,
+    test_ratio: test,
+    class_names: $('classNames').value.split(',').map(s => s.trim()).filter(Boolean),
+    enable_augmentation: enableAug,
+    labeling_mode: labelingMode,
+  };
+
+  if (labelingMode === 'grounding_dino') {
+    config.box_threshold = parseFloat($('boxThreshold').value);
+    config.text_threshold = parseFloat($('textThreshold').value);
+    config.gdino_model_size = $('gdinoModelSize').value;
+  } else {
+    if (modelId) config.model_id = modelId;
+  }
+
+  if (enableAug) {
+    config.augmentation = {
+      flip_horizontal: $('augFlipH').checked,
+      flip_vertical: $('augFlipV').checked,
+      rotate: parseInt($('augRotate').value),
+      blur: parseFloat($('augBlur').value),
+      brightness: parseInt($('augBrightness').value),
+      versions: parseInt($('augVersions').value),
+    };
+    const apiKey = $('roboflowApiKey').value.trim();
+    if (apiKey) config.roboflow_api_key = apiKey;
+  }
+
+  $('runBtn').disabled = true;
+  $('progressSection').style.display = 'block';
+  $('resultSection').style.display = 'none';
+  buildStepList(enableAug, labelingMode);
+
+  try {
+    const res = await fetch('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail);
+    listenProgress();
+  } catch (e) {
+    alert(`실행 실패: ${e.message}`);
+    $('runBtn').disabled = false;
+  }
+});
+
+function updateStep(step, status, detail) {
+  const item = document.querySelector(`.step-item[data-step="${step}"]`);
+  if (!item) return;
+  const icon = item.querySelector('.step-icon');
+  const det = item.querySelector('.step-detail');
+  icon.className = `step-icon ${status}`;
+  if (status === 'done') icon.textContent = '\u2713';
+  else if (status === 'error') icon.textContent = '\u2717';
+  else if (status === 'running') icon.textContent = step;
+  if (detail) det.textContent = detail;
+}
+
+function listenProgress() {
+  const es = new EventSource('/api/progress');
+  const details = [];
+
+  es.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    updateStep(data.step, data.status, data.detail);
+    if (data.status === 'done' && data.detail) details.push(data.detail);
+    if (data.download_ready) { es.close(); showResult(details); }
+    if (data.status === 'error') { es.close(); $('runBtn').disabled = false; }
+  };
+  es.onerror = () => { es.close(); $('runBtn').disabled = false; };
+}
+
+function showResult(details) {
+  $('resultSection').style.display = 'block';
+  $('resultSummary').innerHTML = details.map(d => `<div>${d}</div>`).join('');
+  $('runBtn').disabled = false;
+}
+
+// ===================================================
+// 공통 다운로드 함수 (pywebview / 브라우저 겸용)
+// ===================================================
+async function downloadFile(url, suggestedName, btnEl) {
+  const btn = btnEl || document.activeElement;
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '다운로드 준비 중...'; }
+
+  if (window.pywebview && window.pywebview.api) {
+    try {
+      const result = await window.pywebview.api.save_file_from_url(url, suggestedName);
+      if (result && result.success) {
+        if (btn) {
+          btn.textContent = '✓ 저장 완료';
+          btn.style.background = '#0f766e';
+          setTimeout(() => {
+            btn.textContent = origText;
+            btn.style.background = '';
+            btn.disabled = false;
+          }, 3000);
+        }
+      } else if (result && result.cancelled) {
+        if (btn) { btn.textContent = origText; btn.disabled = false; }
+      } else {
+        if (btn) { btn.textContent = origText; btn.disabled = false; }
+        alert('다운로드 오류: ' + (result && result.error ? result.error : '알 수 없는 오류'));
+      }
+    } catch (e) {
+      if (btn) { btn.textContent = origText; btn.disabled = false; }
+      alert('다운로드 오류: ' + e);
+    }
+  } else {
+    // 브라우저 개발 모드 fallback
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = suggestedName;
+    a.click();
+    if (btn) { btn.textContent = origText; btn.disabled = false; }
+  }
+}
+
+// 파이프라인 다운로드 버튼
+$('downloadBtn').addEventListener('click', function() {
+  downloadFile('/api/download', 'dataset.zip', this);
+});
+
+// ===================================================
+// JSON Converter Tab
+// ===================================================
+const convertDropZone = $('convertDropZone');
+const convertFileInput = $('convertFileInput');
+let convertFiles = [];
+let currentConvertId = null;
+
+convertDropZone.addEventListener('click', () => convertFileInput.click());
+convertDropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  convertDropZone.classList.add('drag-over');
+});
+convertDropZone.addEventListener('dragleave', () => convertDropZone.classList.remove('drag-over'));
+convertDropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  convertDropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files.length) handleConvertFiles(Array.from(e.dataTransfer.files));
+});
+convertFileInput.addEventListener('change', () => {
+  if (convertFileInput.files.length) handleConvertFiles(Array.from(convertFileInput.files));
+});
+
+function handleConvertFiles(files) {
+  convertFiles = files.filter(f => f.name.endsWith('.json'));
+  if (!convertFiles.length) {
+    alert('JSON 파일을 선택해주세요.');
+    return;
+  }
+
+  // 파일 목록 표시
+  const listEl = $('convertFileList');
+  listEl.style.display = 'block';
+  listEl.innerHTML = `<b style="font-size:0.8rem;">${convertFiles.length}개 파일 선택됨</b>` +
+    convertFiles.map(f => `<div class="file-item">${f.name} <span style="color:#94a3b8;">(${(f.size/1024).toFixed(1)}KB)</span></div>`).join('');
+
+  // 첫 번째 파일을 브라우저에서 파싱하여 포맷 미리보기
+  previewJsonFormat(convertFiles[0], convertFiles.length);
+  $('convertBtn').disabled = false;
+  $('convertResultCard').style.display = 'none';
+}
+
+function previewJsonFormat(file, totalCount) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      let fmt = 'unknown';
+      let classes = [];
+
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        if (data.annotations && data.images && data.categories) {
+          fmt = 'coco';
+          classes = data.categories.map(c => c.name);
+        } else if (data.shapes && (data.imageWidth || data.imageHeight)) {
+          fmt = 'labelme';
+          // 단일 파일에서만 클래스 추출 (나머지는 서버가 합산)
+          classes = [...new Set(data.shapes.map(s => s.label).filter(Boolean))].sort();
+        }
+      }
+
+      const preview = $('convertPreview');
+      preview.style.display = 'block';
+      const badge = $('formatBadge');
+      badge.className = `format-badge ${fmt}`;
+
+      if (fmt === 'coco') {
+        badge.textContent = 'COCO JSON';
+        $('classTagList').innerHTML = classes.map(c => `<span class="class-tag">${c}</span>`).join('');
+        $('previewNote').textContent = `이미지 ${data.images.length}장 / 어노테이션 ${data.annotations.length}개`;
+      } else if (fmt === 'labelme') {
+        badge.textContent = 'LabelMe JSON';
+        $('classTagList').innerHTML = classes.map(c => `<span class="class-tag">${c}</span>`).join('');
+        $('previewNote').textContent = totalCount > 1
+          ? `${totalCount}개 파일 — 전체 클래스는 변환 후 확인됩니다`
+          : `shape ${data.shapes.length}개`;
+      } else {
+        badge.textContent = '알 수 없는 포맷';
+        $('classTagList').innerHTML = '';
+        $('previewNote').textContent = 'COCO 또는 LabelMe 형식이 아닐 수 있습니다. 변환을 시도하면 서버에서 재확인합니다.';
+      }
+    } catch (err) {
+      $('convertPreview').style.display = 'none';
+    }
+  };
+  reader.readAsText(file);
+}
+
+$('convertBtn').addEventListener('click', async () => {
+  if (!convertFiles.length) return;
+
+  const btn = $('convertBtn');
+  btn.disabled = true;
+  btn.textContent = '변환 중...';
+
+  const form = new FormData();
+  convertFiles.forEach(f => form.append('files', f));
+
+  try {
+    const res = await fetch('/api/convert-json', { method: 'POST', body: form });
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.detail || '변환 실패');
+    }
+
+    currentConvertId = data.convert_id;
+
+    // 결과 표시
+    const resultCard = $('convertResultCard');
+    resultCard.style.display = 'block';
+
+    const resultEl = $('convertResult');
+    const classTags = data.class_names.map(c => `<span class="class-tag">${c}</span>`).join('');
+    resultEl.innerHTML = `
+      <div>포맷: <b>${data.format}</b></div>
+      <div>변환된 이미지: <b>${data.image_count}장</b></div>
+      <div>클래스 수: <b>${data.class_names.length}개</b></div>
+      <div style="margin-top:8px;">클래스:<br><div class="class-list" style="margin-top:6px;">${classTags}</div></div>
+    `;
+
+    // 다운로드 버튼 설정
+    const dlBtn = $('convertDownloadBtn');
+    dlBtn.onclick = function() {
+      downloadFile(
+        `/api/convert-download/${currentConvertId}`,
+        `yolo_labels_${currentConvertId}.zip`,
+        this
+      );
+    };
+
+    btn.textContent = '변환 실행';
+    btn.disabled = false;
+
+  } catch (e) {
+    alert(`변환 실패: ${e.message}`);
+    btn.textContent = '변환 실행';
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

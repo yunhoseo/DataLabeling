@@ -1,0 +1,46 @@
+# ============================================================
+# YOLO Auto-Label Pipeline - .gitignore
+# ============================================================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+
+# --- PyInstaller 빌드 산출물 ---
+dist/
+build/
+*.manifest
+
+# --- 데이터 / 임시 ---
+temp/
+dataset/
+uploads/
+runs/
+logs/
+*.log
+
+# --- ML 모델 / 영상 (대용량) ---
+*.pt
+*.pth
+*.onnx
+*.mp4
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- IDE ---
+.idea/
+.vscode/
+*.swp
+*~
+
+# --- 가상환경 ---
+venv/
+.env/
+.venv/

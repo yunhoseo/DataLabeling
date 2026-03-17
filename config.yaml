@@ -1,0 +1,30 @@
+# === 입력 ===
+video_path: "./red_ball_4m.mp4"
+model_path: "./best.pt"
+
+# === 프레임 추출 ===
+frame_interval: 30              # N 프레임마다 1장
+target_width: 640               # 출력 이미지 가로 (null이면 원본 유지)
+target_height: 640              # 출력 이미지 세로 (null이면 원본 유지)
+
+# === 라벨링 모드 ===
+labeling_mode: "yolo"           # "yolo" (커스텀 모델) 또는 "grounding_dino" (zero-shot)
+
+# === 오토라벨링 (YOLO 모드) ===
+conf_threshold: 0.5             # detection confidence
+
+# === Grounding DINO 설정 (grounding_dino 모드에서만 사용) ===
+# box_threshold: 0.35           # detection box confidence
+# text_threshold: 0.25          # text-image matching threshold
+# gdino_model_size: "base"      # "tiny" (~172MB, 빠름) 또는 "base" (~894MB, 정확)
+
+# === 클래스 정보 ===
+class_names:
+  - "red_ball"                  # best.pt 모델의 클래스 목록
+
+# === Roboflow 증강 ===
+roboflow_api_key: "2Ft4PNQydKm3PD8VIEwW"            # Roboflow API Key (https://app.roboflow.com/settings/api)
+
+# === 출력 ===
+output_dir: "./dataset"
+temp_dir: "./temp"

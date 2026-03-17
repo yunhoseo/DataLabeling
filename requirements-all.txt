@@ -1,0 +1,41 @@
+# ============================================================
+# YOLO Auto-Label Pipeline - 전체 의존성 (빌드 포함)
+# ============================================================
+# 설치: pip install -r requirements-all.txt
+#
+# 참고:
+#   - torch / torchvision은 플랫폼별 설치 방법이 다를 수 있음
+#     macOS (Apple Silicon): pip install torch torchvision
+#     Windows (CUDA):        pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#     Windows (CPU only):    pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#   - pywebview는 플랫폼별 추가 의존성 필요
+#     macOS:   pip install pyobjc
+#     Windows: pip install pythonnet
+# ============================================================
+
+# --- Core ML ---
+torch>=2.0.0
+torchvision>=0.15.0
+ultralytics>=8.0.0
+transformers>=4.36.0
+opencv-python>=4.8.0
+tqdm>=4.65.0
+
+# --- Web Server ---
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-multipart>=0.0.9
+pyyaml>=6.0
+
+# --- Native UI ---
+pywebview>=5.0
+
+# --- Data Augmentation / Export ---
+roboflow>=1.1.0
+
+# --- Image Processing ---
+Pillow>=10.0.0
+
+# --- Build (PyInstaller) ---
+pyinstaller>=6.0
+pyinstaller-hooks-contrib
