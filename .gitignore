@@ -25,6 +25,7 @@ logs/
 
 # --- ML 모델 / 영상 (대용량) ---
 *.pt
+!best.pt
 *.pth
 *.onnx
 *.mp4

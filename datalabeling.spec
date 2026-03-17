@@ -56,9 +56,12 @@ project_datas = [
     ),
     # 기본 설정
     (os.path.join(project_root, "config.yaml"), "."),
-    # YOLO 기본 모델
-    (os.path.join(project_root, "best.pt"), "."),
 ]
+
+# YOLO 기본 모델 (있을 때만 포함)
+_best_pt = os.path.join(project_root, "best.pt")
+if os.path.exists(_best_pt):
+    project_datas.append((_best_pt, "."))
 
 # pywebview: JS 파일 (JS 인젝션용 필수)
 webview_datas = collect_data_files("webview", subdir="js")
