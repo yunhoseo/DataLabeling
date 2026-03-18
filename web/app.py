@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 # config.yaml에서 Roboflow API Key 로드
 _config_path = get_resource_path("config.yaml")
-_cfg = yaml.safe_load(_config_path.read_text()) if _config_path.exists() else {}
+_cfg = yaml.safe_load(_config_path.read_text(encoding="utf-8")) if _config_path.exists() else {}
 ROBOFLOW_API_KEY = _cfg.get("roboflow_api_key", "")
 
 app = FastAPI(title="YOLO Auto-Label Pipeline")
