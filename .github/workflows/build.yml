@@ -3,12 +3,14 @@
 # ============================================================
 #
 # 사용법:
-#   git tag v1.0.0
-#   git push origin v1.0.0
+#   git tag v1.1.0
+#   git push origin v1.1.0
 #
 # 결과:
-#   GitHub Releases 페이지에 macOS / Windows ZIP 파일 자동 업로드
-#   → 누구나 다운로드 가능
+#   GitHub Releases 페이지에 다운로드 파일 자동 생성:
+#   - DataLabeling-macOS.zip          (macOS)
+#   - DataLabeling-Setup-x.x.x.exe   (Windows 인스톨러 — 권장)
+#   - DataLabeling-Windows.zip        (Windows 고급 사용자용)
 #
 # 수동 실행:
 #   GitHub → Actions → Build & Release → Run workflow
@@ -27,7 +29,7 @@ on:
         required: false
         default: 'manual'
 
-# 전체 워크플로우에 쓰기 권한 부여 (Release 생성용)
+# Release 생성 및 Artifact 업로드에 쓰기 권한 필요
 permissions:
   contents: write
 
@@ -48,7 +50,7 @@ jobs:
             artifact_name: DataLabeling-Windows
 
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 75
 
     steps:
       - name: Checkout repository
@@ -108,15 +110,75 @@ jobs:
             xattr -cr dist/DataLabeling.app
           fi
 
-      # --- ZIP 압축 (Release 업로드용) ---
+      # ======================================================
+      # Windows 전용: Inno Setup 인스톨러 빌드
+      # ======================================================
+
+      # Inno Setup 설치 (Chocolatey는 windows-latest에 기본 포함)
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        run: choco install innosetup --yes --no-progress
+        shell: pwsh
+
+      # 버전 추출: refs/tags/v1.2.3 → 1.2.3
+      - name: Extract version
+        if: runner.os == 'Windows'
+        id: ver
+        shell: pwsh
+        run: |
+          $ref = "${{ github.ref }}"
+          if ($ref -match '^refs/tags/v(.+)$') {
+            $ver = $Matches[1]
+          } else {
+            $inp = "${{ github.event.inputs.version }}"
+            $ver = if ($inp -and $inp -ne 'manual') { $inp -replace '^v','' } else { "0.0.0-dev" }
+          }
+          Write-Host "Version: $ver"
+          echo "VERSION=$ver" >> $env:GITHUB_ENV
+
+      # Inno Setup 컴파일 → DataLabeling-Setup-x.x.x.exe 생성
+      - name: Build Inno Setup installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # 출력 디렉토리 생성
+          New-Item -ItemType Directory -Force -Path "installer\Output" | Out-Null
+
+          # ISCC 경로 탐색 (Chocolatey 기본 경로 또는 PATH)
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            $iscc = (Get-Command iscc -ErrorAction SilentlyContinue)?.Source
+          }
+          if (-not $iscc) {
+            Write-Error "ISCC.exe not found. Inno Setup may not be installed."
+            exit 1
+          }
+          Write-Host "Using ISCC: $iscc"
+
+          # 컴파일 실행 (버전 동적 주입)
+          & "$iscc" "/DMyAppVersion=$env:VERSION" "installer\windows_installer.iss"
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Inno Setup build failed (exit code: $LASTEXITCODE)"
+            exit 1
+          }
+
+          # 결과 파일 확인
+          $installer = Get-Item "installer\Output\DataLabeling-Setup-*.exe"
+          $sizeMB = [math]::Round($installer.Length / 1MB, 1)
+          Write-Host "Installer: $($installer.Name) ($sizeMB MB)"
+          echo "INSTALLER_PATH=$($installer.FullName)" >> $env:GITHUB_ENV
+          echo "INSTALLER_NAME=$($installer.Name)" >> $env:GITHUB_ENV
+
+      # ======================================================
+      # ZIP 압축 (Release 첨부용 + 고급 사용자용)
+      # ======================================================
       - name: Create ZIP (macOS)
         if: runner.os == 'macOS'
         run: |
           cd dist
           zip -r -y ../DataLabeling-macOS.zip DataLabeling.app
           cd ..
-          echo "ZIP_PATH=DataLabeling-macOS.zip" >> $GITHUB_ENV
-          echo "ZIP_NAME=DataLabeling-macOS.zip" >> $GITHUB_ENV
           ls -lh DataLabeling-macOS.zip
 
       - name: Create ZIP (Windows)
@@ -124,19 +186,36 @@ jobs:
         shell: pwsh
         run: |
           Compress-Archive -Path "dist\DataLabeling\*" -DestinationPath "DataLabeling-Windows.zip" -Force
-          echo "ZIP_PATH=DataLabeling-Windows.zip" >> $env:GITHUB_ENV
-          echo "ZIP_NAME=DataLabeling-Windows.zip" >> $env:GITHUB_ENV
-          Get-Item "DataLabeling-Windows.zip" | Select-Object Length
+          Get-Item "DataLabeling-Windows.zip" | Select-Object Name, @{N='SizeMB';E={[math]::Round($_.Length/1MB,1)}}
 
-      # --- Artifact 업로드 (Release job에서 사용) ---
-      - name: Upload ZIP artifact
+      # ======================================================
+      # Artifact 업로드 (release job에서 사용)
+      # ======================================================
+      - name: Upload macOS ZIP artifact
+        if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ env.ZIP_PATH }}
+          name: DataLabeling-macOS
+          path: DataLabeling-macOS.zip
           retention-days: 7
 
-      # --- 빌드 정보 ---
+      - name: Upload Windows ZIP artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DataLabeling-Windows-ZIP
+          path: DataLabeling-Windows.zip
+          retention-days: 7
+
+      - name: Upload Windows installer artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DataLabeling-Windows-Installer
+          path: installer/Output/DataLabeling-Setup-*.exe
+          retention-days: 7
+
+      # --- 빌드 요약 ---
       - name: Build summary
         run: |
           echo "========================================"
@@ -144,7 +223,7 @@ jobs:
           echo "========================================"
 
   # ========================================================
-  # Job 2: Release 생성 (양쪽 빌드 완료 후)
+  # Job 2: Release 생성 (양쪽 빌드 완료 후, 태그 push 시만)
   # ========================================================
   release:
     needs: build
@@ -152,23 +231,36 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
-      # --- 양쪽 빌드 결과 다운로드 ---
-      - name: Download macOS build
+      # 버전 추출 (Release 제목용)
+      - name: Extract version
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      # --- Artifact 다운로드 ---
+      - name: Download macOS ZIP
         uses: actions/download-artifact@v4
         with:
           name: DataLabeling-macOS
           path: ./release-assets/
 
-      - name: Download Windows build
+      - name: Download Windows ZIP
         uses: actions/download-artifact@v4
         with:
-          name: DataLabeling-Windows
+          name: DataLabeling-Windows-ZIP
+          path: ./release-assets/
+
+      - name: Download Windows installer
+        uses: actions/download-artifact@v4
+        with:
+          name: DataLabeling-Windows-Installer
           path: ./release-assets/
 
       - name: List release assets
         run: ls -lh ./release-assets/
 
-      # --- GitHub Release 생성 + ZIP 첨부 ---
+      # --- GitHub Release 생성 + 파일 첨부 ---
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -177,24 +269,28 @@ jobs:
             ## YOLO Auto-Label Pipeline ${{ github.ref_name }}
 
             ### 다운로드
+
             | 플랫폼 | 파일 | 설명 |
             |--------|------|------|
-            | 🍎 macOS (Apple Silicon) | `DataLabeling-macOS.zip` | `.app` 번들 — 압축 해제 후 실행 |
-            | 🪟 Windows (x64) | `DataLabeling-Windows.zip` | 압축 해제 → `DataLabeling.exe` 실행 |
+            | 🍎 macOS (Apple Silicon) | `DataLabeling-macOS.zip` | 압축 해제 → `DataLabeling.app` 실행 |
+            | 🪟 Windows (x64) **권장** | `DataLabeling-Setup-${{ env.VERSION }}.exe` | 인스톨러 — 더블클릭으로 설치 |
+            | 🪟 Windows (x64) 고급 | `DataLabeling-Windows.zip` | 압축 해제 → 직접 실행 |
 
-            ### 설치 방법
+            ### 🪟 Windows 설치 방법 (권장: 인스톨러)
 
-            **macOS:**
-            1. `DataLabeling-macOS.zip` 다운로드
-            2. 압축 해제 → `DataLabeling.app` 생성
-            3. 첫 실행 시 Gatekeeper 경고 → 우클릭 > "열기" 선택
-            4. 또는 터미널: `xattr -cr DataLabeling.app`
+            1. **`DataLabeling-Setup-${{ env.VERSION }}.exe`** 다운로드
+            2. 더블클릭으로 실행
+            3. SmartScreen 경고 시 → **"추가 정보"** 클릭 → **"실행"** (최초 1회만)
+            4. 설치 마법사: 경로 확인 → **"설치"** → **"완료"**
+            5. 바탕화면 바로가기로 이후에는 **경고 없이 즉시 실행**
 
-            **Windows:**
-            1. `DataLabeling-Windows.zip` 다운로드
-            2. 압축 해제 → `DataLabeling` 폴더 생성
-            3. `DataLabeling.exe` 더블클릭으로 실행
-            4. Windows Defender 경고 시 → "추가 정보" > "실행" 클릭
+            > 💡 인스톨러는 설치 중 보안 설정을 자동으로 초기화하여 이후 실행 시 Windows SmartScreen 경고가 표시되지 않습니다.
+
+            ### 🍎 macOS 설치 방법
+
+            1. `DataLabeling-macOS.zip` 다운로드 및 압축 해제
+            2. 첫 실행 시: **우클릭 → "열기"** 선택
+            3. 또는 터미널: `xattr -cr DataLabeling.app`
 
             ### 기능
             - 🚀 YOLO 오토 라벨링 파이프라인
@@ -204,4 +300,5 @@ jobs:
           prerelease: false
           files: |
             ./release-assets/DataLabeling-macOS.zip
+            ./release-assets/DataLabeling-Setup-*.exe
             ./release-assets/DataLabeling-Windows.zip

@@ -60,20 +60,55 @@ python -m PyInstaller "%SPEC_FILE%" --distpath "%DIST_DIR%" --workpath "%BUILD_D
 
 :: --- 결과 확인 ---
 echo.
-if exist "%DIST_DIR%\DataLabeling\DataLabeling.exe" (
-    echo ========================================
-    echo   빌드 완료!
-    echo ========================================
-    echo   출력 디렉토리: %DIST_DIR%\DataLabeling\
-    echo   실행 파일:     %DIST_DIR%\DataLabeling\DataLabeling.exe
-    echo.
-    echo   실행 방법:
-    echo     %DIST_DIR%\DataLabeling\DataLabeling.exe
-    echo ========================================
-) else (
+if not exist "%DIST_DIR%\DataLabeling\DataLabeling.exe" (
     echo ERROR: 빌드 출력을 찾을 수 없습니다!
     pause
     exit /b 1
+)
+
+echo ========================================
+echo   PyInstaller 빌드 완료!
+echo ========================================
+echo   출력 디렉토리: %DIST_DIR%\DataLabeling\
+echo   실행 파일:     %DIST_DIR%\DataLabeling\DataLabeling.exe
+echo ========================================
+echo.
+
+:: ============================================================
+:: [7/7] Inno Setup 인스톨러 빌드 (Inno Setup 설치된 경우)
+::
+:: 인스톨러를 만들면 Windows 사용자가 더블클릭 한 번으로
+:: 설치 + MotW(Mark of the Web) 보안 해제까지 자동 처리됩니다.
+::
+:: Inno Setup 설치: https://jrsoftware.org/isdl.php
+:: ============================================================
+echo [7/7] Inno Setup 인스톨러 빌드...
+set ISCC_PATH="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+
+if exist %ISCC_PATH% (
+    echo   Inno Setup 발견: %ISCC_PATH%
+    if not exist "installer\Output" mkdir "installer\Output"
+
+    %ISCC_PATH% "installer\windows_installer.iss"
+
+    if errorlevel 1 (
+        echo   WARNING: Inno Setup 빌드 실패. 계속합니다.
+    ) else (
+        echo.
+        echo ========================================
+        echo   인스톨러 빌드 완료!
+        echo ========================================
+        echo   인스톨러: installer\Output\DataLabeling-Setup-*.exe
+        echo.
+        echo   배포 방법:
+        echo     installer\Output\DataLabeling-Setup-*.exe 를 배포하세요.
+        echo     설치 후 Windows 보안 경고 없이 즉시 실행 가능합니다.
+        echo ========================================
+    )
+) else (
+    echo   Inno Setup이 설치되지 않았습니다. 인스톨러 빌드를 건너뜁니다.
+    echo   설치 방법: https://jrsoftware.org/isdl.php
+    echo   설치 후 이 스크립트를 다시 실행하면 인스톨러가 자동 생성됩니다.
 )
 
 echo.
