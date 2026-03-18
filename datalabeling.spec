@@ -172,6 +172,19 @@ elif IS_WINDOWS:
         "clr_loader",
         "pythonnet",
         "clr",
+        # uvicorn / anyio Windows 백엔드
+        # (누락 시 다른 PC에서 서버가 조용히 실패함)
+        "anyio",
+        "anyio._backends._asyncio",
+        "anyio._backends._trio",
+        "uvicorn.logging",
+        "uvicorn.loops",
+        "uvicorn.loops.asyncio",
+        "uvicorn.protocols",
+        "uvicorn.protocols.http",
+        "uvicorn.protocols.http.auto",
+        "uvicorn.lifespan",
+        "uvicorn.lifespan.on",
     ]
 
 # ultralytics와 roboflow의 모든 서브모듈 수집 (동적 import 많음)

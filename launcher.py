@@ -154,6 +154,69 @@ LOADING_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+def _error_html(error_msg: str, log_file: Path) -> str:
+    """서버 시작 실패 시 pywebview 창에 표시할 에러 페이지."""
+    safe_msg = str(error_msg).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    safe_log = str(log_file).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>YOLO Auto-Label Pipeline — 오류</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    background: #0f172a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #e2e8f0;
+    padding: 2rem;
+  }}
+  .title {{ font-size: 1.5rem; font-weight: 700; color: #f87171; margin-bottom: 1rem; }}
+  .subtitle {{ font-size: 0.95rem; color: #94a3b8; margin-bottom: 2rem; }}
+  .card {{
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 1.5rem;
+    max-width: 700px;
+    width: 100%;
+    margin-bottom: 1.5rem;
+  }}
+  .label {{ font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }}
+  .code {{
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 0.8rem;
+    color: #fca5a5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+  }}
+  .log-path {{ color: #7dd3fc; font-family: monospace; font-size: 0.85rem; }}
+  .hint {{ color: #64748b; font-size: 0.85rem; margin-top: 1rem; line-height: 1.6; }}
+</style>
+</head>
+<body>
+  <div class="title">앱 서버 시작 실패</div>
+  <div class="subtitle">백엔드 서버가 시작되지 않았습니다.</div>
+  <div class="card">
+    <div class="label">오류 내용</div>
+    <div class="code">{safe_msg}</div>
+  </div>
+  <div class="card">
+    <div class="label">로그 파일 경로</div>
+    <div class="log-path">{safe_log}</div>
+    <div class="hint">위 경로의 로그 파일을 개발자에게 전달해주시면 문제를 해결하는 데 도움이 됩니다.</div>
+  </div>
+</body>
+</html>"""
+
+
 class NativeAPI:
     """pywebview JS API 브리지 — 네이티브 파일 저장 다이얼로그 처리."""
 
@@ -196,12 +259,12 @@ class NativeAPI:
             return {"success": False, "error": str(e)}
 
 
-def start_server(port: int, ready_event: threading.Event):
+def start_server(port: int, ready_event: threading.Event, server_error: list):
     """백그라운드 스레드에서 uvicorn 서버 시작."""
     try:
         from web.app import app
         print("  모듈 로딩 완료!", flush=True)
-        ready_event.set()  # 모듈 로딩 완료 신호
+        ready_event.set()  # 모듈 로딩 완료 신호 (import 성공)
 
         import uvicorn
         uvicorn.run(
@@ -213,6 +276,8 @@ def start_server(port: int, ready_event: threading.Event):
     except Exception as e:
         print(f"\n[ERROR] 서버 시작 실패: {e}", flush=True)
         traceback.print_exc()
+        server_error[0] = f"{e}\n\n{traceback.format_exc()}"
+        ready_event.set()  # 항상 main thread 해제 (무한 대기 방지)
 
 
 def main():
@@ -275,10 +340,12 @@ def main():
 
         def on_webview_started():
             """webview가 시작된 후 서버 초기화 및 URL 전환."""
+            server_error = [None]  # 스레드 간 에러 공유 (리스트로 mutable 참조)
+
             # 서버를 별도 스레드에서 시작
             server_thread = threading.Thread(
                 target=start_server,
-                args=(port, ready_event),
+                args=(port, ready_event, server_error),
                 daemon=True,
             )
             server_thread.start()
@@ -286,13 +353,23 @@ def main():
             # 모듈 로딩 완료 대기 (최대 120초)
             ready_event.wait(timeout=120)
 
+            # import 단계 실패 감지
+            if server_error[0]:
+                print(f"\n[ERROR] 서버 import 실패 — 에러 페이지 표시", flush=True)
+                window.load_html(_error_html(server_error[0], log_file))
+                return
+
             # 서버 포트 연결 대기 (최대 30초)
-            wait_for_server(port, timeout=30)
+            if not wait_for_server(port, timeout=30):
+                msg = "서버가 30초 내에 포트에 응답하지 않았습니다."
+                print(f"\n[ERROR] {msg}", flush=True)
+                window.load_html(_error_html(msg, log_file))
+                return
 
             # 실제 앱 URL로 전환
             window.load_url(f"http://127.0.0.1:{port}")
 
-            # macOS 알림: 서버 시작 완료
+            # 알림: 서버 시작 완료
             if is_frozen():
                 show_notification(
                     "YOLO Auto-Label Pipeline",
